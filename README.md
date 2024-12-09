@@ -82,7 +82,7 @@ Upon job creation, the server sets the job's status to `pending`. After a config
 
 ## Testing
 
-Three tests in `integrationTest.js` demonstrate the library's usage and potential implementation scenarios.
+Three tests in `integrationTest.js` demonstrate the library's usage and potential implementation scenarios. Each test will test the client functions and return upon completion.
 
 ## Future Enhancements
 
