@@ -12,9 +12,6 @@ The library efficiently manages multiple jobs, initializing and cleaning up WebS
 
 This client is ideal for users who require timely and reliable updates on video translation tasks, ensuring that they can make informed decisions based on the most current data.
 
-
-The user 
-
 ## Quick Start
 
 To get started, install the necessary Node.js libraries:
