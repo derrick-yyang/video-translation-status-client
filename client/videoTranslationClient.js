@@ -1,73 +1,169 @@
 import io from 'socket.io-client';
 
-// User should be able to call waitForStatus() and receive a result object with the translation status.
-// The library will not throw an error if the status is error. We will let the user decide what to do
-// The library will only throw an error if there is a problem with the connection to the server.
-
-// Users may also call getCurrentStatus() to get the current status of the translation.
-
 class VideoTranslationStatusClient {
-  constructor(serverUrl, timeout = 30000, maxRetries = 3, retryDelay = 1000, useWebSockets = true) {
+  constructor(serverUrl, {
+    timeout = 30000,
+    maxRetries = 3,
+    retryDelay = 1000,
+    usePolling = false
+  } = {}) {
     this.serverUrl = serverUrl;
     this.timeout = timeout;
     this.maxRetries = maxRetries;
     this.retryDelay = retryDelay;
-    this.retryCount = 0;
-    this.connected = false;
-    this.mode = useWebSockets ? 'websocket' : 'polling';
     this.pollInterval = 1000;
     this.maxPollInterval = 5000;
+    this.usePolling = usePolling;
+    this.jobs = new Map();
   }
 
-  async connect() {
-    if (this.mode === 'polling') {
-      return; // Skip WebSocket connection if polling is preferred
+  async createJob() {
+    try {
+      const response = await fetch(`${this.serverUrl}/createJob`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+      this.jobs.set(data.jobId, { mode: this.usePolling ? 'polling' : 'websocket' });
+      return data.jobId;
+    } catch (error) {
+      throw new Error(`Failed to create job: ${error.message}`);
+    }
+  }
+
+  async connectForJob(jobId) {
+    if (this.usePolling) {
+      this.jobs.set(jobId, { mode: 'polling' });
+      return;
     }
 
     try {
-      this.socket = io(this.serverUrl, {
+      const socket = io(this.serverUrl, {
         reconnection: true,
         reconnectionAttempts: this.maxRetries,
         reconnectionDelay: this.retryDelay
       });
-      this.setupSocketListeners();
+
+      this.jobs.set(jobId, {
+        socket,
+        connected: false,
+        retryCount: 0,
+        mode: 'websocket'
+      });
+
+      return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Connection timeout'));
+        }, this.timeout);
+
+        socket.on('connect', () => {
+          clearTimeout(timeoutId);
+          const job = this.jobs.get(jobId);
+          if (job) {
+            job.connected = true;
+            job.retryCount = 0;
+          }
+          resolve(socket);
+        });
+
+        socket.on('connect_error', (error) => {
+          const job = this.jobs.get(jobId);
+          if (job) {
+            job.connected = false;
+            if (job.retryCount < this.maxRetries) {
+              job.retryCount++;
+            } else {
+              job.mode = 'polling';
+              reject(new Error('Connection failed, switching to polling'));
+            }
+          }
+        });
+      });
     } catch (error) {
-      console.log('WebSocket connection failed, falling back to polling');
-      this.mode = 'polling';
+      const job = this.jobs.get(jobId);
+      if (job) {
+        job.mode = 'polling';
+      }
+      throw error;
     }
   }
 
-  setupSocketListeners() {
-    this.socket.on('connect', () => {
-      this.connected = true;
-      this.retryCount = 0;
-    });
+  async waitForStatus(jobId) {
+    if (!jobId) {
+      throw new Error('Job ID is required');
+    }
 
-    this.socket.on('connect_error', async (error) => {
-      this.connected = false;
-
-      if (this.retryCount < this.maxRetries) {
-        this.retryCount++;
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
-      } else {
-        console.log('WebSocket retries exhausted, falling back to polling');
-        this.mode = 'polling';
+    let job = this.jobs.get(jobId);
+    if (!job) {
+      try {
+        await this.connectForJob(jobId);
+        job = this.jobs.get(jobId);
+      } catch (error) {
+        job = { mode: 'polling' };
+        this.jobs.set(jobId, job);
       }
+    }
+
+    if (job.mode === 'websocket' && !this.usePolling) {
+      try {
+        const result = await this.waitForWebSocketStatus(jobId);
+        return result;
+      } catch (error) {
+        job.mode = 'polling';
+        return this.pollStatus(jobId);
+      }
+    }
+
+    // Use polling
+    const result = await this.pollStatus(jobId);
+    return result;
+  }
+
+  async waitForWebSocketStatus(jobId) {
+    const job = this.jobs.get(jobId);
+    if (!job || !job.socket) {
+      throw new Error('No socket connection for job');
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Operation timed out after ${this.timeout}ms`));
+        this.closeJob(jobId);
+      }, this.timeout);
+
+      const handleStatus = (result) => {
+        if (result.jobId === jobId && (result.status === 'completed' || result.status === 'error')) {
+          clearTimeout(timeoutId);
+          job.socket.off('statusUpdate', handleStatus);
+          job.socket.off('error', handleError);
+          resolve(result);
+          this.closeJob(jobId);
+        }
+      };
+
+      const handleError = (error) => {
+        clearTimeout(timeoutId);
+        job.socket.off('statusUpdate', handleStatus);
+        job.socket.off('error', handleError);
+        reject(new Error('Socket connection error: ' + error.message));
+        this.closeJob(jobId);
+      };
+
+      job.socket.on('statusUpdate', handleStatus);
+      job.socket.on('error', handleError);
     });
   }
 
-  async pollStatus() {
+  async pollStatus(jobId) {
     let elapsedTime = 0;
     let currentInterval = this.pollInterval;
 
     while (elapsedTime < this.timeout) {
-      const status = await this.getCurrentStatus();
+      const status = await this.getCurrentStatus(jobId);
 
       if (status === 'completed' || status === 'error') {
-        return { status };
+        return { jobId, status };
       }
 
-      // Exponential backoff with max limit
       currentInterval = Math.min(currentInterval * 1.5, this.maxPollInterval);
       await new Promise(resolve => setTimeout(resolve, currentInterval));
       elapsedTime += currentInterval;
@@ -76,92 +172,12 @@ class VideoTranslationStatusClient {
     throw new Error(`Operation timed out after ${this.timeout}ms`);
   }
 
-  // Return the final status of the video translation server
-  async waitForStatus() {
-    // If the status is not pending, return the status immediately
-    const currentStatus = await this.getCurrentStatus();
-    if (currentStatus !== 'pending') {
-      return { status: currentStatus };
-    }
-
-    if (this.mode === 'websocket') {
-      try {
-        if (!this.connected) {
-          await this.connect();
-        }
-
-        if (this.mode === 'websocket' && this.socket) {
-          return await this.waitForWebSocketStatus();
-        }
-      } catch (error) {
-        console.log('WebSocket approach failed, falling back to polling');
-        this.mode = 'polling';
-      }
-    }
-
-    // Fallback to polling if WebSocket fails or is not preferred
-    return await this.pollStatus();
-  }
-
-  // This function will return the status if it's completed. Otherwise, it will throw an error.
-  async waitForStatus() {
-    if (this.mode === 'websocket') {
-      try {
-        if (!this.connected) {
-          await this.connect();
-        }
-
-        if (this.mode === 'websocket' && this.socket) {
-          return await this.waitForWebSocketStatus();
-        }
-      } catch (error) {
-        console.log('WebSocket approach failed, falling back to polling');
-        this.mode = 'polling';
-        // Try again with polling
-        return await this.pollStatus();
-      }
-    }
-
-    // Fallback to polling if WebSocket fails or is not preferred
-    return await this.pollStatus();
-  }
-
-  async waitForWebSocketStatus() {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Operation timed out after ${this.timeout}ms`));
-        this.close();
-      }, this.timeout);
-
-      const handleStatus = (result) => {
-        if (result.status === 'completed' || result.status === 'error') {
-          clearTimeout(timeoutId);
-          this.socket.off('statusUpdate', handleStatus);
-          this.socket.off('error', handleError);
-
-          // Return the result regardless of status
-          resolve(result);
-          this.close();
-        }
-      };
-
-      const handleError = (error) => {
-        clearTimeout(timeoutId);
-        this.socket.off('statusUpdate', handleStatus);
-        this.socket.off('error', handleError);
-        // Socket error should trigger fallback to polling
-        reject(new Error('Socket error: ' + error.message));
-        this.close();
-      };
-
-      this.socket.on('statusUpdate', handleStatus);
-      this.socket.on('error', handleError);
-    });
-  }
-
-  async getCurrentStatus() {
+  async getCurrentStatus(jobId) {
     try {
-      const response = await fetch(`${this.serverUrl}/status`);
+      const response = await fetch(`${this.serverUrl}/status/${jobId}`);
+      if (response.status === 404) {
+        throw new Error('Job not found');
+      }
       const data = await response.json();
       return data.status;
     } catch (error) {
@@ -169,11 +185,17 @@ class VideoTranslationStatusClient {
     }
   }
 
+  closeJob(jobId) {
+    const job = this.jobs.get(jobId);
+    if (job && job.socket) {
+      job.socket.disconnect();
+      this.jobs.delete(jobId);
+    }
+  }
+
   close() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-      this.connected = false;
+    for (const jobId of this.jobs.keys()) {
+      this.closeJob(jobId);
     }
   }
 }
