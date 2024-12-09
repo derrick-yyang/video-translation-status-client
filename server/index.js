@@ -11,9 +11,9 @@ const PORT = process.env.PORT || 3000;
 // Map for all the jobs. Ideally, this is stored in a database
 const jobs = new Map();
 
-// Configurable delay (e.g., 5 to 10 seconds)
+// Configurable delay (e.g., 2 to 5 seconds)
 const MIN_DELAY = 2000;
-const MAX_DELAY = 2000;
+const MAX_DELAY = 5000;
 let jobId = 0;
 
 function generateJobId() {

@@ -79,22 +79,24 @@ async function testPolling() {
 
 // Run all tests
 async function runAllTests() {
-    try {
-        const results = await Promise.all([
-            testSingleJob(),
-            testMultipleJobs(),
-            testPollingFallback()
-        ]);
+  try {
+      const tests = [testSingleJob, testMultipleJobs, testPolling];
+      const results = [];
 
-        console.log('\n=== Test Results Summary ===');
-        const allPassed = results.every(result => result);
-        console.log(`${allPassed ? 'All tests passed!' : 'Some tests failed.'}`);
-        
-        process.exit(allPassed ? 0 : 1);
-    } catch (error) {
-        console.error('Test suite failed:', error);
-        process.exit(1);
-    }
+      for (const test of tests) {
+          const result = await test();
+          results.push(result);
+      }
+
+      console.log('\n=== Test Results Summary ===');
+      const allPassed = results.every(result => result);
+      console.log(`${allPassed ? 'All tests passed!' : 'Some tests failed.'}`);
+      
+      process.exit(allPassed ? 0 : 1);
+  } catch (error) {
+      console.error('Test suite failed:', error);
+      process.exit(1);
+  }
 }
 
 runAllTests();
