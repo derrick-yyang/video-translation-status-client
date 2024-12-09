@@ -30,6 +30,11 @@ io.on('connection', (socket) => {
   
   socket.emit('statusUpdate', { status: status });
 
+  socket.on('error', (error) => {
+    console.error('Socket error:', error);
+    socket.emit('error', { message: error.message });
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
