@@ -21,7 +21,6 @@ function generateJobId() {
     return jobId.toString();
 }
 
-// Helper to create a new job
 function createJob(jobId) {
     jobs.set(jobId, { status: 'pending' });
     
@@ -40,7 +39,6 @@ function createJob(jobId) {
 
 // Create a new job
 app.post('/createJob', (req, res) => {
-    // Generates a unique job UUID
     const jobId = generateJobId();
     createJob(jobId);
     res.json({ jobId });

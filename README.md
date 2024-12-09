@@ -12,15 +12,13 @@ The library efficiently manages multiple jobs, initializing and cleaning up WebS
 
 This client is ideal for users who require timely and reliable updates on video translation tasks, ensuring that they can make informed decisions based on the most current data.
 
-## Quick Start
+## Usage
 
 To get started, install the necessary Node.js libraries:
 
 ```bash
 npm install
 ```
-
-## Usage
 
 Start the server on `localhost:3000` by executing the following command in the root directory:
 
@@ -43,6 +41,7 @@ The interface offers three primary functions:
 1. `createJob()`: Initiates a new job on the server and returns a job ID.
 2. `getCurrentStatus(jobId)`: Retrieves the current status of a specified job.
 3. `waitForStatus(jobId)`: Waits for a job to reach a completion status (`completed` or `error`) and returns that status.
+4. `close()`: Cleanup all jobs initiated by the client.
 
 #### Example Usage
 
@@ -68,6 +67,8 @@ const results = await Promise.allSettled(
 console.log("Results: ", results);
 
 // Use the results as needed...
+
+client.close();
 ```
 
 ## Server Overview
