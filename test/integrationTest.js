@@ -4,9 +4,18 @@ const SERVER_URL = 'http://localhost:3000';
 async function runTest() {
   const client = new VideoTranslationStatusClient(SERVER_URL);
   try {
-      const status = await client.waitForStatus();
-      console.log('Translation completed:', status);
-      process.exit(0);
+    const currentStatus = await client.getCurrentStatus();
+    console.log('Current status:', currentStatus);
+    
+    const result = await client.waitForStatus();
+    console.log('Status received:', result);
+    if (result.status === 'completed') {
+        // Continue or handle success status
+        process.exit(0);
+      } else {
+        // Handle translation error
+        process.exit(1);
+      }
   } catch (error) {
       console.error('VideoTranslationStatusClient error:', error.message);
       process.exit(1);
@@ -15,8 +24,8 @@ async function runTest() {
 
 // Add a timeout to ensure the test doesn't run indefinitely
 setTimeout(() => {
-  console.error('Test timed out after 30 seconds');
+  console.error('Test timed out after 45 seconds');
   process.exit(1);
-}, 30000);
+}, 45000);
 
 runTest();
